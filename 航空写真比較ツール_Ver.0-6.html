@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8" />
+  <title>Step1.Leafletで地理院地図を並列表示する - GeoJSON永続化対応</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+  <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+
+  <script>
+    // GeoJSON Storage Manager using localStorage
+    const GeoJSONStorage = {
+      key: 'leaflet-geojson-data',
+      
+      save: function(geojson, filename) {
+        const data = {
+          geojson: geojson,
+          filename: filename,
+          timestamp: new Date().toISOString()
+        };
+        try {
+          localStorage.setItem(this.key, JSON.stringify(data));
+          console.log('GeoJSON saved to localStorage:', filename);
+        } catch (err) {
+          console.warn('Failed to save to localStorage:', err);
+          // Fallback to session storage
+          try {
+            sessionStorage.setItem(this.key, JSON.stringify(data));
+            console.log('GeoJSON saved to sessionStorage as fallback');
+          } catch (sessionErr) {
+            console.error('Failed to save to any storage:', sessionErr);
+          }
+        }
+      },
+      
+      load: function() {
+        try {
+          // Try localStorage first
+          let data = localStorage.getItem(this.key);
+          if (data) {
+            console.log('GeoJSON loaded from localStorage');
+            return JSON.parse(data);
+          }
+          // Try sessionStorage as fallback
+          data = sessionStorage.getItem(this.key);
+          if (data) {
+            console.log('GeoJSON loaded from sessionStorage');
+            return JSON.parse(data);
+          }
+          return null;
+        } catch (err) {
+          console.warn('Failed to load from storage:', err);
+          return null;
+        }
+      },
+      
+      clear: function() {
+        try {
+          localStorage.removeItem(this.key);
+          sessionStorage.removeItem(this.key);
+          console.log('GeoJSON cleared from all storage');
+        } catch (err) {
+          console.warn('Failed to clear storage:', err);
+        }
+      },
+      
+      // Check storage size (useful for debugging)
+      getStorageInfo: function() {
+        try {
+          const data = localStorage.getItem(this.key);
+          return {
+            exists: !!data,
+            size: data ? (data.length / 1024).toFixed(2) + ' KB' : '0 KB',
+            keys: Object.keys(localStorage).filter(k => k.includes('leaflet'))
+          };
+        } catch (err) {
+          return { error: err.message };
+        }
+      }
+    };
+
+    function createBaseLayers() {
+      return {
+        "GSI Standard": L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+          attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+        }),
+        "GSI Seamless Photo": L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', {
+          attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+        }),
+        "GSI Pale": L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
+          attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+        }),
+        "GSI Relief": L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/relief/{z}/{x}/{y}.png', {
+          attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+        }),
+        "GSI Land Use": L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/lcm25k_2012/{z}/{x}/{y}.png', {
+          attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+        }),
+        "GSI 1987年～1990年": L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/gazo4/{z}/{x}/{y}.jpg', {
+          attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+        }),
+        "GSI 1984年～1986年": L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/gazo3/{z}/{x}/{y}.jpg', {
+          attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+        }),
+        "GSI 1979年～1983年": L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/gazo2/{z}/{x}/{y}.jpg', {
+          attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+        }),
+        "GSI 1974年～1978年": L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/gazo1/{z}/{x}/{y}.jpg', {
+          attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+        }),
+        "GSI 1961年～1969年": L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/ort_old10/{z}/{x}/{y}.png', {
+          attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+        }),
+        "GSI 1945年～1950年": L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/ort_USA10/{z}/{x}/{y}.png', {
+          attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+        }),
+        "GSI 1936年～1942年頃": L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/ort_riku10/{z}/{x}/{y}.png', {
+          attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+        }),
+        "GSI 1928年頃（大阪）": L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/ort_1928/{z}/{x}/{y}.png', {
+          attribution: "<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+        }),
+        "CartoDB Positron": L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+          attribution: '&copy; <a href="https://carto.com/">CARTO</a>'
+        }),
+        "OpenStreetMap": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }),
+        "Google Maps": L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+          attribution: '&copy; <a href="https://www.google.com/">Google</a>'
+        })
+      };
+    }
+
+    function loadGeoJSONToMaps(geojsonData, geojsonLayer1, geojsonLayer2, map1, map2) {
+      try {
+        // Clear old GeoJSON layers
+        geojsonLayer1.clearLayers();
+        geojsonLayer2.clearLayers();
+
+        // Add new GeoJSON to both maps
+        const layer1 = L.geoJSON(geojsonData);
+        const layer2 = L.geoJSON(geojsonData);
+
+        geojsonLayer1.addLayer(layer1);
+        geojsonLayer2.addLayer(layer2);
+
+        // Fit maps to GeoJSON bounds if valid
+        const bounds = layer1.getBounds();
+        if (bounds.isValid()) {
+          map1.fitBounds(bounds);
+          map2.fitBounds(bounds);
+        }
+        
+        return true;
+      } catch (err) {
+        console.error('Error loading GeoJSON:', err);
+        return false;
+      }
+    }
+
+    function init() {
+      // Create control panel first (before maps)
+      createControlPanel();
+      
+      const baseLayers1 = createBaseLayers();
+      const baseLayers2 = createBaseLayers();
+
+      const map1 = L.map('mapcontainer1', {
+        center: [35.703640, 139.747635],
+        zoom: 10,
+        layers: [baseLayers1["GSI Seamless Photo"]]
+      });
+      L.control.scale({ maxWidth: 200, position: 'bottomright', imperial: false }).addTo(map1);
+
+      const map2 = L.map('mapcontainer2', {
+        center: [35.703640, 139.747635],
+        zoom: 10,
+        layers: [baseLayers2["Google Maps"]]
+      });
+      L.control.scale({ maxWidth: 200, position: 'bottomright', imperial: false }).addTo(map2);
+
+      L.control.layers(baseLayers1, null, { position: 'topleft', collapsed: true }).addTo(map1);
+      L.control.layers(baseLayers2, null, { position: 'topleft', collapsed: true }).addTo(map2);
+
+      L.Control.geocoder({ defaultMarkGeocode: true }).addTo(map1);
+
+      // FeatureGroups to hold GeoJSON layers on both maps
+      const geojsonLayer1 = L.featureGroup().addTo(map1);
+      const geojsonLayer2 = L.featureGroup().addTo(map2);
+
+      // Wait a bit for DOM to be ready, then initialize UI
+      setTimeout(() => {
+        initializeUI(map1, map2, geojsonLayer1, geojsonLayer2);
+      }, 100);
+    }
+
+    function createControlPanel() {
+      // Remove existing panel if it exists
+      const existingPanel = document.getElementById('controlPanel');
+      if (existingPanel) {
+        existingPanel.remove();
+      }
+
+      // Create control panel
+      const controlPanel = document.createElement('div');
+      controlPanel.id = 'controlPanel';
+      controlPanel.innerHTML = `
+        <button id="syncToggleBtn">同期オン</button>
+        <input type="file" id="geojsonInput" accept=".geojson,.json" title="Upload GeoJSON file">
+        <button id="clearBtn" title="Clear GeoJSON data">クリア</button>
+        <button id="debugBtn" title="Show storage info">ストレージ情報</button>
+        <div id="statusDiv"></div>
+      `;
+      document.body.appendChild(controlPanel);
+      console.log('Control panel created');
+    }
+
+    function initializeUI(map1, map2, geojsonLayer1, geojsonLayer2) {
+      console.log('Starting UI initialization...');
+      
+      // Get control elements with retry logic
+      const getElements = () => {
+        return {
+          syncBtn: document.getElementById('syncToggleBtn'),
+          input: document.getElementById('geojsonInput'),
+          clearBtn: document.getElementById('clearBtn'),
+          debugBtn: document.getElementById('debugBtn'),
+          statusDiv: document.getElementById('statusDiv')
+        };
+      };
+
+      let elements = getElements();
+      let retries = 0;
+      const maxRetries = 10;
+
+      // Retry until elements are found
+      while ((!elements.syncBtn || !elements.input || !elements.clearBtn || !elements.debugBtn || !elements.statusDiv) && retries < maxRetries) {
+        console.log(`Retry ${retries + 1}: Looking for elements...`);
+        retries++;
+        elements = getElements();
+        if (retries === maxRetries) {
+          console.error('Failed to find control elements after', maxRetries, 'retries');
+          return;
+        }
+      }
+
+      console.log('All control elements found successfully');
+
+      const { syncBtn, input, clearBtn, debugBtn, statusDiv } = elements;
+
+      function updateStatus(message) {
+        console.log('Status:', message);
+        if (statusDiv) {
+          statusDiv.textContent = message;
+          setTimeout(() => {
+            if (statusDiv) statusDiv.textContent = '';
+          }, 5000);
+        }
+      }
+
+      // Load saved GeoJSON on page load
+      const savedData = GeoJSONStorage.load();
+      if (savedData) {
+        console.log('Found saved GeoJSON data:', savedData.filename);
+        const success = loadGeoJSONToMaps(savedData.geojson, geojsonLayer1, geojsonLayer2, map1, map2);
+        if (success) {
+          updateStatus(`復元: ${savedData.filename} (${new Date(savedData.timestamp).toLocaleString()})`);
+        } else {
+          updateStatus('復元に失敗しました');
+          GeoJSONStorage.clear();
+        }
+      } else {
+        console.log('No saved GeoJSON data found');
+        updateStatus('GeoJSONファイルをアップロードしてください');
+      }
+
+      // Sync logic
+      let syncing = true;
+
+      function syncMaps(sourceMap, targetMap) {
+        if (!syncing) return;
+        targetMap.setView(sourceMap.getCenter(), sourceMap.getZoom(), { animate: false });
+      }
+
+      map1.on('move zoomend', () => syncMaps(map1, map2));
+      map2.on('move zoomend', () => syncMaps(map2, map1));
+
+      // Set up event listeners
+      console.log('Setting up event listeners...');
+
+      // Test click handler first
+      syncBtn.onclick = function(e) {
+        console.log('Sync button clicked via onclick!');
+        syncing = !syncing;
+        syncBtn.textContent = syncing ? '同期オン' : '同期オフ';
+        syncBtn.style.color = syncing ? '#28a745' : '#dc3545';
+        updateStatus(syncing ? '同期をオンにしました' : '同期をオフにしました');
+      };
+      syncBtn.style.color = '#28a745';
+
+      // File upload
+      input.onchange = function(e) {
+        console.log('File input changed!');
+        const file = e.target.files[0];
+        if (!file) return;
+
+        updateStatus('ファイルを読み込み中...');
+        const reader = new FileReader();
+        reader.onload = function (event) {
+          try {
+            const geojson = JSON.parse(event.target.result);
+            console.log('GeoJSON parsed successfully');
+            
+            const success = loadGeoJSONToMaps(geojson, geojsonLayer1, geojsonLayer2, map1, map2);
+            if (success) {
+              GeoJSONStorage.save(geojson, file.name);
+              updateStatus(`読み込み・保存完了: ${file.name}`);
+              console.log('GeoJSON loaded and saved successfully');
+            } else {
+              throw new Error('GeoJSON processing failed');
+            }
+          } catch (err) {
+            console.error('GeoJSON loading error:', err);
+            alert("GeoJSONファイルの読み込みに失敗しました。正しい形式か確認してください。");
+            updateStatus('読み込みエラー');
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      // Clear button
+      clearBtn.onclick = function(e) {
+        console.log('Clear button clicked!');
+        if (confirm('GeoJSONデータをクリアしますか？')) {
+          console.log('Clearing GeoJSON data...');
+          geojsonLayer1.clearLayers();
+          geojsonLayer2.clearLayers();
+          GeoJSONStorage.clear();
+          input.value = '';
+          updateStatus('データをクリアしました');
+          
+          // Reset to default view
+          map1.setView([35.703640, 139.747635], 10);
+          map2.setView([35.703640, 139.747635], 10);
+          console.log('GeoJSON data cleared successfully');
+        } else {
+          console.log('Clear cancelled by user');
+        }
+      };
+
+      // Debug button
+      debugBtn.onclick = function(e) {
+        console.log('Debug button clicked!');
+        const info = GeoJSONStorage.getStorageInfo();
+        const message = info.error ? 
+          `Storage Error: ${info.error}` :
+          `Storage: ${info.exists ? 'データあり' : 'データなし'}\nSize: ${info.size}\nKeys: ${info.keys.length}個`;
+        alert(message);
+        console.log('Storage info:', info);
+      };
+
+      console.log('UI initialization complete - all event listeners set up');
+    }
+
+    // Alternative initialization if onload fails
+    document.addEventListener('DOMContentLoaded', function() {
+      if (document.readyState === 'loading') {
+        return; // Wait for onload
+      }
+      // Fallback initialization
+      if (!document.getElementById('controlPanel')) {
+        console.log('Fallback initialization triggered');
+        setTimeout(init, 100);
+      }
+    });
+  </script>
+
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      position: relative;
+    }
+
+    .flex {
+      display: flex;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #mapcontainer1,
+    #mapcontainer2 {
+      flex: 1;
+      height: 100%;
+    }
+
+    /* Control panel style */
+    #controlPanel {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 10px;
+      border-radius: 5px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 200px;
+    }
+
+    #controlPanel button, #controlPanel input[type="file"] {
+      padding: 6px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #fff;
+      color: #333;
+      font-weight: 600;
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    #controlPanel button:hover {
+      background: #f4f4f4;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    }
+
+    #syncToggleBtn {
+      color: #28a745;
+    }
+
+    #clearBtn {
+      background: #dc3545;
+      color: white;
+      border-color: #dc3545;
+    }
+
+    #clearBtn:hover {
+      background: #c82333;
+    }
+
+    #geojsonInput {
+      font-size: 12px;
+      padding: 4px;
+    }
+
+    #statusDiv {
+      font-size: 12px;
+      color: #666;
+      text-align: center;
+      min-height: 16px;
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+
+    /* Responsive design */
+    @media (max-width: 768px) {
+      #controlPanel {
+        right: 5px;
+        top: 5px;
+        min-width: 150px;
+        padding: 8px;
+      }
+      
+      #controlPanel button, #controlPanel input[type="file"] {
+        padding: 4px 6px;
+        font-size: 12px;
+      }
+    }
+  </style>
+</head>
+
+<body onload="init()">
+  <div class="flex">
+    <div id="mapcontainer1"></div>
+    <div id="mapcontainer2"></div>
+  </div>
+</body>
+
+</html>
